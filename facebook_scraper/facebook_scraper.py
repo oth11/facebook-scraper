@@ -97,6 +97,8 @@ class FacebookScraper:
         return self._generic_get_posts(extract_hashtag_post, iter_pages_fn, **kwargs)
 
     def get_posts_by_url(self, post_urls, options={}, remove_source=True) -> Iterator[Post]:
+        if self.session.cookies.get("noscript") == "1":
+            options["noscript"] = True
         for post_url in post_urls:
             url = str(post_url)
             if url.startswith(FB_BASE_URL):
@@ -109,21 +111,6 @@ class FacebookScraper:
             post = {"original_request_url": post_url, "post_url": url}
             logger.debug(f"Requesting page from: {url}")
             response = self.get(url)
-            if response.url == "https://m.facebook.com/watch/?ref=watch_permalink":
-                post_url = re.search("\d+", str(post_url)).group()
-                if post_url:
-                    url = utils.urljoin(
-                        FB_MOBILE_BASE_URL,
-                        f"story.php?story_fbid={post_url}&id=1&m_entstream_source=timeline",
-                    )
-                    post = {"original_request_url": post_url, "post_url": url}
-                    logger.debug(f"Requesting page from: {url}")
-                    response = self.get(url)
-            if "/watch/" in response.url:
-                video_id = parse_qs(urlparse(response.url).query).get("v")[0]
-                url = f"story.php?story_fbid={video_id}&id={video_id}&m_entstream_source=video_home&player_suborigin=entry_point&player_format=permalink"
-                logger.debug(f"Fetching {url}")
-                response = self.get(url)
             options["response_url"] = response.url
             elem = response.html.find('[data-ft*="top_level_post_id"]', first=True)
             if not elem:
@@ -710,6 +697,24 @@ class FacebookScraper:
             response.html.html = response.html.html.replace('<!--', '').replace('-->', '')
             response.raise_for_status()
             self.check_locale(response)
+
+            # Special handling for video posts that redirect to /watch/
+            if response.url == "https://m.facebook.com/watch/?ref=watch_permalink":
+                post_url = re.search("\d+", url).group()
+                if post_url:
+                    url = utils.urljoin(
+                        FB_MOBILE_BASE_URL,
+                        f"story.php?story_fbid={post_url}&id=1&m_entstream_source=timeline",
+                    )
+                    post = {"original_request_url": post_url, "post_url": url}
+                    logger.debug(f"Requesting page from: {url}")
+                    response = self.get(url)
+            if "/watch/" in response.url:
+                video_id = parse_qs(urlparse(response.url).query).get("v")[0]
+                url = f"story.php?story_fbid={video_id}&id={video_id}&m_entstream_source=video_home&player_suborigin=entry_point&player_format=permalink"
+                logger.debug(f"Fetching {url}")
+                response = self.get(url)
+
             if "cookie/consent-page" in response.url:
                 response = self.submit_form(response)
             if (
